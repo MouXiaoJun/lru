@@ -1,6 +1,8 @@
 package lru
 
 import (
+	"fmt"
+	"math"
 	"strings"
 	"sync"
 	"testing"
@@ -70,6 +72,32 @@ func TestZeroValueBehaviors(t *testing.T) {
 		}()
 		c.Set(1, 1)
 	}()
+}
+
+func TestZeroValueClear(t *testing.T) {
+	var c Cache[int, int]
+	for i := 0; i < 2; i++ {
+		c.Clear()
+		if c.Keys() != nil || c.Len() != 0 || c.Capacity() != 0 || c.Contains(1) || c.Delete(1) {
+			t.Fatal("Clear changed zero-value empty behavior")
+		}
+		if v, ok := c.Get(1); ok || v != 0 {
+			t.Fatal("Get after zero-value Clear should miss")
+		}
+		if v, ok := c.Peek(1); ok || v != 0 {
+			t.Fatal("Peek after zero-value Clear should miss")
+		}
+	}
+	for _, write := range []func(){func() { c.Set(1, 1) }, func() { c.SetWithTTL(1, 1, time.Hour) }} {
+		func() {
+			defer func() {
+				if r, ok := recover().(string); !ok || !strings.Contains(r, "lru.New") {
+					t.Fatal("writing after zero-value Clear should still require New")
+				}
+			}()
+			write()
+		}()
+	}
 }
 
 func TestSetGetBasic(t *testing.T) {
@@ -248,6 +276,41 @@ func TestLen(t *testing.T) {
 	}
 	if c.Len() != 4 {
 		t.Fatalf("Len = %d, want 4(受容量限制)", c.Len())
+	}
+}
+
+func TestWritesRejectNonReflexiveKeys(t *testing.T) {
+	for _, key := range []any{
+		math.NaN(), float32(math.NaN()), complex(1, math.NaN()),
+		[1]float64{math.NaN()}, struct{ F float64 }{math.NaN()},
+	} {
+		for _, method := range []string{"Set", "SetWithTTL"} {
+			t.Run(fmt.Sprintf("%s/%T", method, key), func(t *testing.T) {
+				c := New[any, int](1)
+				c.Set("kept", 10)
+				func() {
+					defer func() {
+						if r := recover(); r != "lru: key must equal itself" {
+							t.Errorf("panic = %v; Len=%d Capacity=%d Keys=%v", r, c.Len(), c.Capacity(), c.Keys())
+						}
+					}()
+					for i := 0; i < 2; i++ {
+						if method == "Set" {
+							c.Set(key, i)
+						} else {
+							c.SetWithTTL(key, i, time.Hour)
+						}
+					}
+				}()
+				if v, ok := c.Get("kept"); !ok || v != 10 || c.Len() != 1 {
+					t.Fatal("rejected key changed the cache")
+				}
+				c.Set("next", 20)
+				if v, ok := c.Get("next"); !ok || v != 20 || c.Contains("kept") || c.Len() != 1 || len(c.Keys()) != 1 {
+					t.Fatal("cache unusable after rejected key")
+				}
+			})
+		}
 	}
 }
 

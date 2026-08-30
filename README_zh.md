@@ -4,11 +4,11 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/MouXiaoJun/lru.svg)](https://pkg.go.dev/github.com/MouXiaoJun/lru)
 [![Go Version](https://img.shields.io/badge/go-1.21+-00ADD8?style=flat-square&logo=go)](https://golang.org)
-[![License](https://img.shields.io/badge/license-MulanPSL--2.0-green.svg?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](LICENSE)
 
 基于 Go 泛型的**零依赖**线程安全 LRU 缓存,支持可选的**逐条目 TTL** 过期。面向 Go 1.21+,仅使用标准库。
 
-- ✅ **`Cache[K comparable, V any]`** — 泛型,任意可比较键与任意值类型
+- ✅ **`Cache[K comparable, V any]`** — 泛型,可比较且自等的键与任意值类型
 - ✅ **纯 LRU** — map + 自实现双向链表(带头尾哨兵),淘汰最久未使用条目
 - ✅ **线程安全** — `sync.Mutex` 包裹,`go test -race` 验证
 - ✅ **可选 TTL** — `SetWithTTL` 按条目设置绝对过期时间,`Get`/`Peek`/`Contains`/`Keys` 惰性清理
@@ -51,7 +51,7 @@ func main() {
 	c.Clear()
 
 	// TTL:5 秒后自动过期
-	c.SetWithTTL("session", "token-xyz", 5*time.Second)
+	c.SetWithTTL("session", 42, 5*time.Second)
 }
 ```
 
@@ -59,7 +59,7 @@ func main() {
 
 | 方法 | 说明 | 复杂度 |
 | --- | --- | --- |
-| `New[K, V](capacity int) *Cache[K, V]` | 创建缓存;**capacity <= 0 会 panic**(消息 `lru: capacity must be positive`),保证 New 成功后所有操作无需错误处理 | O(1) |
+| `New[K, V](capacity int) *Cache[K, V]` | 创建缓存;**capacity <= 0 会 panic**(消息 `lru: capacity must be positive`);写入还需满足下述键要求 | O(1) |
 | `Get(key K) (V, bool)` | 取值;命中移动到最近使用位置;过期视为未命中并惰性删除 | O(1) |
 | `Set(key K, value V)` | 写入;已存在则更新并移动到最近使用;新增超容量时淘汰最久未使用;写入的条目**永久有效** | O(1) |
 | `SetWithTTL(key K, value V, ttl time.Duration)` | 同 Set,但设置 ttl 过期;**ttl <= 0 等价于 Set**(永久) | O(1) |
@@ -72,6 +72,8 @@ func main() {
 | `Capacity() int` | 返回容量 | O(1) |
 
 > 所有方法并发安全;除 `Set`/`SetWithTTL` 外,零值 `Cache` 按空缓存处理。缓存必须通过 `New` 创建。
+
+首次使用后不得复制 `Cache`。键必须可比较且自等(`key == key`):NaN 或含 NaN 的非自等复合键在 Set/SetWithTTL 修改缓存前会 panic,消息为 `lru: key must equal itself`。接口键的动态值不可比较时,与 Go map 一样 panic。对零值调用 Clear 是 no-op,不会代替 New 初始化。
 
 ## 淘汰策略
 
@@ -101,18 +103,18 @@ func main() {
 
 | 维度 | **本库 (go-lru)** | **golang-lru** | **freecache** | **bigcache** |
 | --- | --- | --- | --- | --- |
-| 泛型 | ✅ `Cache[K, V]`,任意类型 | ❌ `interface{}` 键值 | ❌ `[]byte` | ❌ `[]byte` |
+| 泛型 | ✅ `Cache[K, V]` | ✅ v2 `Cache[K, V]` | ❌ `[]byte` | ❌ `[]byte` |
 | 淘汰策略 | 严格 LRU | 严格 LRU(另有 2Q 变体) | 近似 LRU(环形缓冲) | 非 LRU,近似 FIFO(按写入序淘汰,命中不重排) |
 | TTL | ✅ 逐条目,绝对过期 | v2 `ExpirableLRU` 提供(缓存级 TTL) | ✅ 逐条目(`SetWithExpire`) | ✅ 逐条目(后台 janitor 批量清理) |
 | 并发模型 | 单 Mutex,实现简单 | 单 Mutex | 256 分片,各带锁,低竞争 | 默认 1024 分片,RWMutex |
-| 值类型 | 任意 `V` | `interface{}` | `[]byte`(大小受限) | `[]byte` |
+| 值类型 | 任意 `V` | 任意 `V`(v2) | `[]byte`(大小受限) | `[]byte` |
 | 依赖 | 零依赖 | 零依赖 | 零依赖 | 零依赖 |
 | 容量语义 | 条目数 | 条目数 | 字节 | 字节 |
 
 ### FAQ
 
 **Q: 和 golang-lru 比,选哪个?**
-A: golang-lru 是久经考验的事实标准,支持 2Q 等高级变体;但它是非泛型的 `interface{}`,类型断言开销与运行时类型错误风险并存。本库面向 Go 1.21+ 泛型用户:编译期类型安全、逐条目 TTL、API 更简洁。若需要 2Q/ARC 等变体或生产级久经测试,选 golang-lru。
+A: [HashiCorp golang-lru v2](https://github.com/hashicorp/golang-lru) 同样支持泛型;需要 Resize、淘汰回调或 2Q 等现成能力时可评估它。本库保留较小 API、逐条目 TTL 与无后台清理 goroutine 的行为,不以泛型作为独有差异。
 
 **Q: 什么时候该用 freecache / bigcache?**
 A: 当缓存的是**大体积字节流**(如序列化结果)、容量按**字节**计、且需要分片低竞争时,这两个库更合适——它们把存储放在连续内存/环形缓冲里,减少 GC 压力。代价是:**bigcache 不是 LRU**(命中不重排,按写入序淘汰),freecache 只是近似 LRU;且键值都必须是 `[]byte`。
@@ -154,4 +156,4 @@ go test -run xxx -bench . -benchmem ./
 
 ## 许可证
 
-[Mulan PSL v2](LICENSE)
+[MIT](LICENSE)

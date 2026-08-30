@@ -1,7 +1,7 @@
 // Package lru 提供基于 Go 泛型实现的线程安全 LRU 缓存,支持可选的逐条目 TTL 过期。
 //
 // 零依赖(仅 Go 标准库),面向 Go 1.21+,风格参考 github.com/MouXiaoJun/set。
-// 底层为 map + 自实现双向链表(未使用 container/list),所有操作 O(1) 平均:
+// 底层为 map + 自实现双向链表(未使用 container/list),除 Keys 为 O(n) 外,操作平均 O(1):
 //
 //   - Cache[K comparable, V any]   线程安全 LRU 缓存(sync.Mutex 包裹,-race 验证)
 //   - Get/Peek/Contains/Keys 等读取路径会惰性清理已过期的 TTL 条目
@@ -32,6 +32,8 @@ type entry[K comparable, V any] struct {
 // head.next 为最近使用的条目,tail.prev 为最久未使用(淘汰候选)。
 //
 // 所有方法都是并发安全的,可被任意多个 goroutine 同时使用。
+// Cache 首次使用后不得复制;复制会共享节点和 map,但不会共享锁。
+// 键必须可比较且自等(key == key);Set/SetWithTTL 拒绝 NaN 及含 NaN 的非自等键。
 type Cache[K comparable, V any] struct {
 	mu   sync.Mutex
 	cap  int
@@ -45,7 +47,7 @@ type Cache[K comparable, V any] struct {
 // New 创建容量为 capacity 的 LRU 缓存。
 //
 // capacity <= 0 会 panic(消息为 "lru: capacity must be positive")。
-// 选择 panic 而非返回 error:保证 New 成功后所有后续操作无需错误处理。
+// 后续写入还要求键可比较且自等,见 SetWithTTL。
 func New[K comparable, V any](capacity int) *Cache[K, V] {
 	if capacity <= 0 {
 		panic("lru: capacity must be positive")
@@ -157,11 +159,14 @@ func (c *Cache[K, V]) Contains(key K) bool {
 //   - key 不存在:新增;若容量已满,淘汰最久未使用的条目。
 //
 // 等价于 SetWithTTL(key, value, 0)。
+// key 不自等时 panic;例如 NaN 或含 NaN 的数组、结构体、复数。
 func (c *Cache[K, V]) Set(key K, value V) {
 	c.SetWithTTL(key, value, 0)
 }
 
 // SetWithTTL 与 Set 相同,但为该条目设置 ttl 的过期时间。
+// key 必须可比较且自等;非自等键会在修改缓存前 panic("lru: key must equal itself")。
+// 接口键的动态值不可比较时,与 Go map 一样 panic。
 //
 // TTL 语义:
 //   - ttl > 0:条目在写入时刻起 ttl 后过期(绝对过期时间);之后的 Get/Peek 命中不会延长它。
@@ -174,6 +179,9 @@ func (c *Cache[K, V]) SetWithTTL(key K, value V, ttl time.Duration) {
 	if c.cap <= 0 {
 		// 零值 Cache 未经 New 初始化,直接写入会 panic 在 nil map 上;提前给出清晰错误。
 		panic("lru: uninitialized cache (capacity 0); create it with lru.New")
+	}
+	if key != key {
+		panic("lru: key must equal itself")
 	}
 
 	var (
@@ -259,11 +267,14 @@ func (c *Cache[K, V]) Keys() []K {
 	return keys
 }
 
-// Clear 清空缓存,容量保持不变;之后可继续正常使用。
+// Clear 清空缓存,容量保持不变;已构造的缓存之后可继续使用,零值保持零值。
 func (c *Cache[K, V]) Clear() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	if c.head == nil {
+		return
+	}
 	c.m = make(map[K]*entry[K, V])
 	c.head = &entry[K, V]{}
 	c.tail = &entry[K, V]{}

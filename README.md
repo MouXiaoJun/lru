@@ -4,13 +4,13 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/MouXiaoJun/lru.svg)](https://pkg.go.dev/github.com/MouXiaoJun/lru)
 [![Go Version](https://img.shields.io/badge/go-1.21+-00ADD8?style=flat-square&logo=go)](https://golang.org)
-[![License](https://img.shields.io/badge/license-MulanPSL--2.0-green.svg?style=flat-square)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-green.svg?style=flat-square)](LICENSE)
 
 A **zero-dependency**, thread-safe, **generic LRU cache** with optional **per-entry TTL**, for Go 1.21+ (standard library only).
 
 ## Features
 
-- ✅ **`Cache[K comparable, V any]`** — any comparable key, any value type
+- ✅ **`Cache[K comparable, V any]`** — comparable, self-equal keys; any value type
 - ✅ **True LRU** — `map` + hand-written doubly linked list with head/tail sentinels; evicts the least recently used entry
 - ✅ **Thread-safe** — guarded by `sync.Mutex`, verified with `go test -race`
 - ✅ **Optional TTL** — `SetWithTTL` per entry (absolute expiry, not sliding); expired entries are **lazily removed** on access
@@ -51,7 +51,7 @@ func main() {
 	c.Delete("a")
 	c.Clear()
 
-	c.SetWithTTL("session", "token-xyz", 5*time.Second) // expires in 5s
+	c.SetWithTTL("session", 42, 5*time.Second) // expires in 5s
 }
 ```
 
@@ -73,6 +73,8 @@ func main() {
 
 All methods are safe for concurrent use. Create caches with `New`; a zero-value `Cache` behaves as empty for reads, and `Set`/`SetWithTTL` panic with a hint.
 
+Do not copy a `Cache` after first use. Keys must compare equal to themselves (`key == key`): `Set`/`SetWithTTL` panic with `lru: key must equal itself` before mutation for NaN or composite keys containing NaN. Interface keys with non-comparable dynamic values panic as they do with a Go map. `Clear` on a zero-value cache is a no-op, not initialization.
+
 ## Eviction policy
 
 Classic **LRU**: every hit/write moves the entry to the head (most-recent); when a new entry exceeds capacity, the tail (least-recently-used) is evicted. `map[K]*entry` gives O(1) lookup; the sentinel doubly linked list gives O(1) move/evict. `Keys` is O(n).
@@ -89,14 +91,14 @@ Classic **LRU**: every hit/write moves the entry to the head (most-recent); when
 
 | | **go-lru** | **golang-lru** | **freecache** | **bigcache** |
 | --- | --- | --- | --- | --- |
-| Generic | ✅ `Cache[K, V]` | ❌ `interface{}` | ❌ `[]byte` | ❌ `[]byte` |
+| Generic | ✅ `Cache[K, V]` | ✅ v2 `Cache[K, V]` | ❌ `[]byte` | ❌ `[]byte` |
 | Policy | true LRU | true LRU (+2Q variant) | approximate LRU (ring buffer) | **not LRU** — FIFO-ish (no reorder on hit) |
 | TTL | ✅ per-entry, absolute | v2 `ExpirableLRU` (cache-wide) | ✅ per-entry | ✅ per-entry (janitor) |
 | Concurrency | single Mutex | single Mutex | 256 shards, low contention | ~1024 shards, RWMutex |
-| Values | any `V` | `interface{}` | `[]byte` (size-limited) | `[]byte` |
+| Values | any `V` | any `V` (v2) | `[]byte` (size-limited) | `[]byte` |
 | Capacity | entry count | entry count | bytes | bytes |
 
-**FAQ:** choose **golang-lru** for battle-tested production use or 2Q/ARC variants (at the cost of `interface{}`); choose **freecache/bigcache** for large byte blobs with byte-based capacity and sharded low-contention reads (they are not strict LRU, and require `[]byte` keys/values); choose **go-lru** for type-safe generic caching with per-entry TTL and zero dependencies. TTL is not sliding-window — reset it yourself in the write path if you need that. `New` panics on non-positive capacity by design (a programming error, not a recoverable runtime condition).
+**FAQ:** [HashiCorp golang-lru v2](https://github.com/hashicorp/golang-lru) is generic too; evaluate it when you need APIs such as Resize, eviction callbacks or 2Q. This library keeps a smaller API with per-entry TTL and no background cleanup goroutine. TTL is not sliding-window — reset it yourself in the write path if needed. `New` panics on non-positive capacity; writes also enforce the key requirements above.
 
 ## Quality gates
 
@@ -111,4 +113,4 @@ Benchmarks (Apple M5): `BenchmarkSet` ~544 ns/op (64 B, 1 alloc); `BenchmarkGetH
 
 ## License
 
-[Mulan PSL v2](LICENSE)
+[MIT](LICENSE)

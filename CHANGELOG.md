@@ -2,6 +2,14 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/),版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.0.1] - 2026-08-30
+
+### Fixed / Changed
+
+- Reject non-reflexive keys such as NaN before mutating the cache.
+- Make Clear safe for a zero-value cache; add lifecycle regression tests.
+- Align LICENSE and current documentation with MIT, as confirmed by the maintainer; preserve existing copyright notices.
+
 ## [v1.0.0] - 2026-08-29
 
 首个正式版本。

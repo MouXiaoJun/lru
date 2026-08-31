@@ -1,5 +1,7 @@
 # go-lru
 
+Maintenance scope: preserve the published API; focus on bug fixes, security and Go compatibility, with no planned API expansion.
+
 [中文](README_zh.md)
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/MouXiaoJun/lru.svg)](https://pkg.go.dev/github.com/MouXiaoJun/lru)

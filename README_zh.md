@@ -1,5 +1,7 @@
 # go-lru
 
+维护边界：保持已发布 API，继续修复缺陷、安全问题和 Go 兼容性，不主动扩展 API。
+
 [English](README.md)
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/MouXiaoJun/lru.svg)](https://pkg.go.dev/github.com/MouXiaoJun/lru)
